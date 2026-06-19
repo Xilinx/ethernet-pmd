@@ -597,6 +597,9 @@ static int
 xxv_eth_dev_stop(struct rte_eth_dev *dev)
 {
 	struct xxv_eth_dev *priv = xxv_eth_dev_private(dev);
+	struct axidma_tx_queue *txq = dev->data->tx_queues[0];
+	struct axidma_rx_queue *rxq = dev->data->rx_queues[0];
+	unsigned int i;
 
 	XXV_LOG(NOTICE, "Stopping device %s", dev->data->name);
 
@@ -604,6 +607,24 @@ xxv_eth_dev_stop(struct rte_eth_dev *dev)
 	XXV_LOG(NOTICE, "Stopping AXI DMA channels...");
 	axidma_write_reg(priv, AXIDMA_TX_CR_OFFSET, 0);
 	axidma_write_reg(priv, AXIDMA_RX_CR_OFFSET, 0);
+
+	if (txq != NULL) {
+		while (txq->tx_tail != txq->tx_head) {
+			if (txq->sw_ring[txq->tx_tail] != NULL) {
+				rte_pktmbuf_free(txq->sw_ring[txq->tx_tail]);
+				txq->sw_ring[txq->tx_tail] = NULL;
+			}
+			txq->tx_tail = (txq->tx_tail + 1) % txq->nb_desc;
+		}
+		txq->tx_head = 0;
+		txq->tx_tail = 0;
+	}
+
+	if (rxq != NULL) {
+		for (i = 0; i < rxq->nb_desc; i++)
+			rxq->bd_ring[i].status = 0;
+		rxq->rx_tail = 0;
+	}
 
 	XXV_LOG(NOTICE, "Device stopped successfully");
 	return 0;
