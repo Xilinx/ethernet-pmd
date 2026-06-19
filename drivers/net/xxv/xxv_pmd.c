@@ -661,18 +661,10 @@ xxv_eth_dev_infos_get(struct rte_eth_dev *dev,
 	dev_info->tx_desc_lim.nb_min = 32;
 	dev_info->tx_desc_lim.nb_align = 1;
 
-	/* Report actual queue descriptor counts if queues are setup */
-	if (dev->data->rx_queues != NULL && dev->data->rx_queues[0] != NULL) {
-		rxq = dev->data->rx_queues[0];
-		dev_info->nb_rx_queues = 1;
-		dev_info->default_rxportconf.ring_size = rxq->nb_desc;
-	}
-
-	if (dev->data->tx_queues != NULL && dev->data->tx_queues[0] != NULL) {
-		txq = dev->data->tx_queues[0];
-		dev_info->nb_tx_queues = 1;
-		dev_info->default_txportconf.ring_size = txq->nb_desc;
-	}
+	/* Default ring sizes — used when app passes nb_desc=0 to queue_setup.
+	 * Application can override by passing an explicit non-zero nb_desc. */
+	dev_info->default_rxportconf.ring_size = 2048;
+	dev_info->default_txportconf.ring_size = 2048;
 
 	XXV_LOG(DEBUG, "Device info retrieved for %s", dev->data->name);
 	return 0;
