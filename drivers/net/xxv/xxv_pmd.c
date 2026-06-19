@@ -157,7 +157,7 @@ xxv_eth_rx_burst(void *queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
 		 */
 		mbuf->data_len = bd->status & 0x007FFFFF;
 		mbuf->pkt_len = mbuf->data_len;
-		mbuf->port = rxq->queue_id;
+		mbuf->port = rxq->priv->port_id;
 
 		/* Update byte statistics */
 		rxq->rx_bytes += mbuf->pkt_len;
