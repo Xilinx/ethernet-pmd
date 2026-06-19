@@ -211,6 +211,7 @@ xxv_eth_tx_burst(void *queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 	struct axidma_tx_queue *txq = queue;
 	struct axidma_bd *bd;
 	struct rte_mbuf *mbuf;
+	struct rte_mbuf *seg;
 	uint16_t nb_tx = 0;
 	uint16_t tx_tail;
 	uint16_t tx_head;
@@ -223,24 +224,25 @@ xxv_eth_tx_burst(void *queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 	/* Calculate available slots in circular queue (reserve 1 slot to distinguish full from empty) */
 	slots_available = (txq->nb_desc + tx_tail - tx_head - 1) % txq->nb_desc;
 
-	/* Lazy cleanup: only clean if we don't have enough space */
+	/* Lazy cleanup: only clean if we don't have enough space.
+	 * Free all completed descriptors; a multi-segment packet stores its
+	 * mbuf head only on the last (EOF) BD, so the whole chain is freed
+	 * once there and the NULL intermediate slots are skipped. */
 	if (unlikely(nb_pkts > slots_available)) {
 		uint16_t cleaned = 0;
 
-		/* Try to free completed descriptors */
-		while (tx_tail != tx_head && cleaned < nb_pkts) {
+		while (tx_tail != tx_head) {
 			bd = &txq->bd_ring[tx_tail];
 			if (!(bd->status & AXIDMA_BD_STS_CMPLT))
 				break;
 
-			/* Free the transmitted mbuf */
-			if (likely(txq->sw_ring[tx_tail] != NULL)) {
+			if (txq->sw_ring[tx_tail] != NULL) {
 				rte_pktmbuf_free(txq->sw_ring[tx_tail]);
 				txq->sw_ring[tx_tail] = NULL;
-				cleaned++;
 			}
 
 			tx_tail = (tx_tail + 1) % txq->nb_desc;
+			cleaned++;
 		}
 
 		if (cleaned > 0) {
@@ -250,36 +252,48 @@ xxv_eth_tx_burst(void *queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 		}
 	}
 
-	if (nb_pkts > slots_available)
-		nb_pkts = slots_available;
-
 	for (nb_tx = 0; nb_tx < nb_pkts; nb_tx++) {
 		mbuf = tx_pkts[nb_tx];
-		bd = &txq->bd_ring[tx_head];
 
-		/* Prefetch next descriptor */
-		if (likely(nb_tx + 1 < nb_pkts))
-			rte_prefetch0(&txq->bd_ring[(tx_head + 1) % txq->nb_desc]);
+		/* A packet needs one BD per segment; only start it if the whole
+		 * chain fits, never submit a partial frame. */
+		if (mbuf->nb_segs > slots_available)
+			break;
 
 		/* Prefetch next mbuf */
 		if (likely(nb_tx + 1 < nb_pkts))
 			rte_prefetch0(tx_pkts[nb_tx + 1]);
 
-		/* Setup buffer descriptor - cache IOVA calculation */
-		mbuf_iova = rte_mbuf_data_iova(mbuf);
-		bd->buf_addr = (uint32_t)mbuf_iova;
-		bd->buf_addr_msb = (uint32_t)(mbuf_iova >> 32);
-		bd->control = mbuf->pkt_len | AXIDMA_BD_CTRL_TXSOF | AXIDMA_BD_CTRL_TXEOF;
-		bd->status = 0;
+		for (seg = mbuf; seg != NULL; seg = seg->next) {
+			bd = &txq->bd_ring[tx_head];
 
-		/* Store mbuf in software ring */
-		txq->sw_ring[tx_head] = mbuf;
+			/* Prefetch the next descriptor we'll write */
+			rte_prefetch0(&txq->bd_ring[(tx_head + 1) % txq->nb_desc]);
+
+			mbuf_iova = rte_mbuf_data_iova(seg);
+			bd->buf_addr = (uint32_t)mbuf_iova;
+			bd->buf_addr_msb = (uint32_t)(mbuf_iova >> 32);
+
+			/* Per-segment length; data_len is uint16_t so it can never
+			 * overlap the SOF/EOF control bits. */
+			bd->control = seg->data_len;
+			if (seg == mbuf)            /* first segment */
+				bd->control |= AXIDMA_BD_CTRL_TXSOF;
+			if (seg->next == NULL)      /* last segment */
+				bd->control |= AXIDMA_BD_CTRL_TXEOF;
+			bd->status = 0;
+
+			/* Store the mbuf head only on the last segment's BD so the
+			 * whole chain is freed exactly once on completion. */
+			txq->sw_ring[tx_head] = (seg->next == NULL) ? mbuf : NULL;
+
+			tx_head = (tx_head + 1) % txq->nb_desc;
+		}
+
+		slots_available -= mbuf->nb_segs;
 
 		/* Update byte statistics */
 		txq->tx_bytes += mbuf->pkt_len;
-
-		/* Move to next descriptor */
-		tx_head = (tx_head + 1) % txq->nb_desc;
 	}
 
 	/* Update tail pointer to trigger DMA */
@@ -686,6 +700,10 @@ xxv_eth_dev_infos_get(struct rte_eth_dev *dev,
 	 * Application can override by passing an explicit non-zero nb_desc. */
 	dev_info->default_rxportconf.ring_size = 2048;
 	dev_info->default_txportconf.ring_size = 2048;
+
+	/* TX scatter-gather: a packet may span multiple mbuf segments,
+	 * one BD per segment (SOF on first, EOF on last). */
+	dev_info->tx_offload_capa = RTE_ETH_TX_OFFLOAD_MULTI_SEGS;
 
 	XXV_LOG(DEBUG, "Device info retrieved for %s", dev->data->name);
 	return 0;
