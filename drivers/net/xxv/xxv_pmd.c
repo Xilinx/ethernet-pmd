@@ -132,12 +132,54 @@ xxv_eth_rx_burst(void *queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
 		if (!(status & AXIDMA_BD_STS_CMPLT))
 			break;
 
+		/* Acquire barrier: once CMPLT is observed, ensure the DMA's
+		 * writes to the descriptor and buffer are visible before we read
+		 * the length and hand the payload to the application. Required on
+		 * weakly-ordered architectures (e.g. aarch64). */
+		rte_io_rmb();
+
 		/* Get mbuf from software ring */
 		mbuf = rxq->sw_ring[rx_tail];
 		if (unlikely(mbuf == NULL)) {
-			/* Memory corruption - descriptor points to invalid mbuf */
+			/* Memory corruption — allocate a fresh mbuf to restore a
+			 * valid backing buffer before handing the descriptor back
+			 * to hardware; without this, DMA would write to whatever
+			 * address bd->buf_addr currently holds. If allocation fails,
+			 * leave the descriptor untouched and stop — do not hand
+			 * hardware a descriptor with no valid buffer. */
+			mbuf = rte_pktmbuf_alloc(rxq->mb_pool);
+			if (unlikely(mbuf == NULL)) {
+				rx_drop++;
+				break;
+			}
 			rx_drop++;
-			break;
+			rxq->sw_ring[rx_tail] = mbuf;
+			new_iova = rte_mbuf_data_iova_default(mbuf);
+			bd->buf_addr = (uint32_t)new_iova;
+			bd->buf_addr_msb = (uint32_t)(new_iova >> 32);
+			bd->control = rte_pktmbuf_tailroom(mbuf);
+			bd->status = 0;
+			rx_tail = (rx_tail + 1) % rxq->nb_desc;
+			nb_rx--;
+			continue;
+		}
+
+		/* Drop frames the DMA flagged as errored, but recycle the
+		 * descriptor with its existing mbuf so the ring keeps flowing.
+		 * nb_rx-- cancels the loop's increment so the dropped frame does
+		 * not consume an rx_pkts slot. */
+		if (unlikely(status & (AXIDMA_BD_STS_DEC_ERR |
+		                       AXIDMA_BD_STS_SLV_ERR |
+		                       AXIDMA_BD_STS_INT_ERR))) {
+			rx_drop++;
+			new_iova = rte_mbuf_data_iova_default(mbuf);
+			bd->buf_addr = (uint32_t)new_iova;
+			bd->buf_addr_msb = (uint32_t)(new_iova >> 32);
+			bd->control = rte_pktmbuf_tailroom(mbuf);
+			bd->status = 0;
+			rx_tail = (rx_tail + 1) % rxq->nb_desc;
+			nb_rx--;
+			continue;
 		}
 
 		/* Allocate new mbuf for this descriptor */
@@ -177,8 +219,11 @@ xxv_eth_rx_burst(void *queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
 		rx_tail = (rx_tail + 1) % rxq->nb_desc;
 	}
 
-	/* Update tail pointer in queue structure */
-	if (likely(nb_rx > 0)) {
+	/* Update tail pointer in queue structure. Commit whenever the ring
+	 * advanced — this includes a poll that only dropped errored frames
+	 * (nb_rx == 0 but descriptors were recycled), so the recycled BDs are
+	 * handed back to hardware and the ring does not stall. */
+	if (likely(rx_tail != rxq->rx_tail)) {
 		/* Ensure all BD writes complete before updating hardware */
 		rte_wmb();
 		rte_io_wmb();
@@ -230,6 +275,10 @@ xxv_eth_tx_burst(void *queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 	 * once there and the NULL intermediate slots are skipped. */
 	if (unlikely(nb_pkts > slots_available)) {
 		uint16_t cleaned = 0;
+
+		/* Acquire barrier: ensure we see DMA-written CMPLT bits before
+		 * scanning descriptors, matching the same barrier on the RX path. */
+		rte_io_rmb();
 
 		while (tx_tail != tx_head) {
 			bd = &txq->bd_ring[tx_tail];
@@ -678,9 +727,6 @@ static int
 xxv_eth_dev_infos_get(struct rte_eth_dev *dev,
                      struct rte_eth_dev_info *dev_info)
 {
-	struct axidma_rx_queue *rxq;
-	struct axidma_tx_queue *txq;
-
 	dev_info->driver_name = "xxv_eth";
 	dev_info->max_rx_queues = 1;
 	dev_info->max_tx_queues = 1;
