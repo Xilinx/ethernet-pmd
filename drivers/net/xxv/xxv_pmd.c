@@ -959,7 +959,7 @@ xxv_eth_probe(struct rte_platform_device *pdev)
 {
 	struct rte_eth_dev *eth_dev;
 	struct xxv_eth_dev *priv;
-	char name[RTE_DEV_NAME_MAX_LEN];
+	char name[XXV_ETH_NAME_MAX_LEN];
 	int ret;
 
 	/* Check if we have required resources (XXV + DMA) */
@@ -1036,7 +1036,7 @@ xxv_eth_remove(struct rte_platform_device *pdev)
 {
 	struct rte_eth_dev *eth_dev;
 	struct xxv_eth_dev *priv;
-	char name[RTE_DEV_NAME_MAX_LEN];
+	char name[XXV_ETH_NAME_MAX_LEN];
 
 	/* Find the eth_dev */
 	snprintf(name, sizeof(name), "net_%s", pdev->name);

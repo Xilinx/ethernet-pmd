@@ -76,6 +76,11 @@ extern int xxv_logtype;
 #define XXV_MIN_PKT_LEN        64
 #define XXV_DEFAULT_MTU        1500
 
+/* pdev->name can itself be up to RTE_DEV_NAME_MAX_LEN bytes; add room
+ * for the "net_" prefix so building the eth device name never truncates it.
+ */
+#define XXV_ETH_NAME_MAX_LEN   (RTE_DEV_NAME_MAX_LEN + 4)
+
 /* Forward declarations */
 struct rte_eth_dev;
 struct rte_platform_device;
