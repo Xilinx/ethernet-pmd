@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(C) 2024 AMD-Xilinx.
+ * Copyright(C) 2026 AMD-Xilinx.
  */
 
 #ifndef _AXIDMA_H_

@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(C) 2024 AMD-Xilinx.
+ * Copyright(C) 2026 AMD-Xilinx.
  */
 
 #include <stdio.h>
@@ -116,10 +116,14 @@ xxv_eth_rx_burst(void *queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
 	uint32_t status;
 	rte_iova_t new_iova;
 	uint16_t rx_drop = 0;
+	uint16_t scanned;
 
 	rx_tail = rxq->rx_tail;
 
-	for (nb_rx = 0; nb_rx < nb_pkts; nb_rx++) {
+	/* Bound total descriptors examined by nb_desc, not nb_pkts: recycled
+	 * error/corrupt descriptors don't advance nb_rx, so a run of DMA
+	 * errors must not let this loop scan the ring more than once. */
+	for (scanned = 0; nb_rx < nb_pkts && scanned < rxq->nb_desc; scanned++) {
 		bd = &rxq->bd_ring[rx_tail];
 
 		/* Prefetch next descriptor */
@@ -160,14 +164,12 @@ xxv_eth_rx_burst(void *queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
 			bd->control = rte_pktmbuf_tailroom(mbuf);
 			bd->status = 0;
 			rx_tail = (rx_tail + 1) % rxq->nb_desc;
-			nb_rx--;
 			continue;
 		}
 
 		/* Drop frames the DMA flagged as errored, but recycle the
 		 * descriptor with its existing mbuf so the ring keeps flowing.
-		 * nb_rx-- cancels the loop's increment so the dropped frame does
-		 * not consume an rx_pkts slot. */
+		 * This does not consume an rx_pkts slot. */
 		if (unlikely(status & (AXIDMA_BD_STS_DEC_ERR |
 		                       AXIDMA_BD_STS_SLV_ERR |
 		                       AXIDMA_BD_STS_INT_ERR))) {
@@ -178,7 +180,6 @@ xxv_eth_rx_burst(void *queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
 			bd->control = rte_pktmbuf_tailroom(mbuf);
 			bd->status = 0;
 			rx_tail = (rx_tail + 1) % rxq->nb_desc;
-			nb_rx--;
 			continue;
 		}
 
@@ -194,7 +195,7 @@ xxv_eth_rx_burst(void *queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
 		if (likely(nb_rx + 1 < nb_pkts))
 			rte_prefetch0(rxq->sw_ring[(rx_tail + 1) % rxq->nb_desc]);
 
-		/* Get packet length from status field (lower 23 bits) 
+		/* Get packet length from status field (lower 23 bits)
 		 * AXI DMA updates status[22:0] with transferred byte count on RX completion
 		 */
 		mbuf->data_len = bd->status & 0x007FFFFF;
@@ -206,6 +207,7 @@ xxv_eth_rx_burst(void *queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
 
 		/* Add to output array */
 		rx_pkts[nb_rx] = mbuf;
+		nb_rx++;
 
 		/* Refill descriptor with new mbuf - cache IOVA calculation */
 		rxq->sw_ring[rx_tail] = new_mbuf;
@@ -597,12 +599,13 @@ static int
 xxv_eth_dev_start(struct rte_eth_dev *dev)
 {
 	struct xxv_eth_dev *priv = xxv_eth_dev_private(dev);
-	struct axidma_rx_queue *rxq;
-	struct axidma_tx_queue *txq;
+	struct axidma_rx_queue *rxq = NULL;
+	struct axidma_tx_queue *txq = NULL;
 	uint32_t reg_val;
 
 	/* Initialize TX queue - AXI DMA has single TX channel */
-	txq = dev->data->tx_queues[0];
+	if (dev->data->nb_tx_queues > 0)
+		txq = dev->data->tx_queues[0];
 	if (txq != NULL) {
 		/* Write current descriptor pointer - LSB first, then MSB */
 		axidma_write_reg(priv, AXIDMA_TX_CURDESC_OFFSET,
@@ -617,7 +620,8 @@ xxv_eth_dev_start(struct rte_eth_dev *dev)
 	}
 
 	/* Initialize RX queue - AXI DMA has single RX channel */
-	rxq = dev->data->rx_queues[0];
+	if (dev->data->nb_rx_queues > 0)
+		rxq = dev->data->rx_queues[0];
 	if (rxq != NULL) {
 		/* Verify BD ring alignment before writing to hardware */
 		if ((rxq->bd_phys_addr & 0x3F) != 0) {
@@ -660,8 +664,8 @@ static int
 xxv_eth_dev_stop(struct rte_eth_dev *dev)
 {
 	struct xxv_eth_dev *priv = xxv_eth_dev_private(dev);
-	struct axidma_tx_queue *txq = dev->data->tx_queues[0];
-	struct axidma_rx_queue *rxq = dev->data->rx_queues[0];
+	struct axidma_tx_queue *txq = NULL;
+	struct axidma_rx_queue *rxq = NULL;
 	unsigned int i;
 
 	XXV_LOG(NOTICE, "Stopping device %s", dev->data->name);
@@ -671,6 +675,8 @@ xxv_eth_dev_stop(struct rte_eth_dev *dev)
 	axidma_write_reg(priv, AXIDMA_TX_CR_OFFSET, 0);
 	axidma_write_reg(priv, AXIDMA_RX_CR_OFFSET, 0);
 
+	if (dev->data->nb_tx_queues > 0)
+		txq = dev->data->tx_queues[0];
 	if (txq != NULL) {
 		while (txq->tx_tail != txq->tx_head) {
 			if (txq->sw_ring[txq->tx_tail] != NULL) {
@@ -683,6 +689,8 @@ xxv_eth_dev_stop(struct rte_eth_dev *dev)
 		txq->tx_tail = 0;
 	}
 
+	if (dev->data->nb_rx_queues > 0)
+		rxq = dev->data->rx_queues[0];
 	if (rxq != NULL) {
 		for (i = 0; i < rxq->nb_desc; i++)
 			rxq->bd_ring[i].status = 0;
@@ -741,6 +749,10 @@ xxv_eth_dev_infos_get(struct rte_eth_dev *dev,
 	dev_info->tx_desc_lim.nb_max = AXIDMA_MAX_BD_COUNT;
 	dev_info->tx_desc_lim.nb_min = 32;
 	dev_info->tx_desc_lim.nb_align = 1;
+
+	/* No TSO, so nb_mtu_seg_max applies: nb_min - 1 is the only
+	 * segment count guaranteed to fit, regardless of ring size chosen. */
+	dev_info->tx_desc_lim.nb_mtu_seg_max = dev_info->tx_desc_lim.nb_min - 1;
 
 	/* Default ring sizes — used when app passes nb_desc=0 to queue_setup.
 	 * Application can override by passing an explicit non-zero nb_desc. */
