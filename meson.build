@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-3-Clause
-# Copyright(C) 2024 AMD-Xilinx
+# Copyright (C) 2026, Advanced Micro Devices, Inc.
 
 project('xxv-pmd', 'c',
     version: '1.0.0',

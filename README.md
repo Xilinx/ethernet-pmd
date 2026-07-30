@@ -1,4 +1,4 @@
-# xxv-pmd
+# EthernetPMD
 
 Standalone, out-of-tree DPDK platform-bus PMD for the AMD-Xilinx XXV
 Ethernet + AXI DMA IP.
@@ -29,12 +29,8 @@ This driver only builds against a DPDK install that has:
 
 1. Driver-SDK headers installed (`meson setup ... -Denable_driver_sdk=true`).
 2. The `compatible`-field patch for `struct rte_platform_driver`
-   (`drivers/bus/platform/bus_platform_driver.h` and `platform.c`,
-   upstream commit `3de08fff97`). This is **not** in stock DPDK 25.11 —
-   it must be carried on top (e.g. as a Yocto recipe patch). Without it,
-   the build fails at compile time with:
-   `error: field designator 'compatible' does not refer to any field
-   in 'struct rte_platform_driver'` — this fails loudly, not silently.
+   (`drivers/bus/platform/bus_platform_driver.h` and `platform.c`),
+   carried via `dpdk_25.11.%.bbappend` since it's not in upstream DPDK 25.11.
 
 Target DPDK version: **25.11** (LTS).
 
@@ -63,20 +59,10 @@ The cross file must declare a `pkgconfig` binary under `[binaries]`
 
 ## Notes on the build
 
-- `meson.build` compiles with `-DALLOW_INTERNAL_API`. Several DPDK
-  calls this driver makes (`rte_eth_dev_allocate`,
-  `rte_eth_dma_zone_reserve`/`_free`, `rte_eth_dev_probing_finish`,
-  `rte_platform_register`, etc.) are marked `__rte_internal`, which
-  DPDK compile-blocks outside its own build tree unless this macro is
-  defined. This is an intentional DPDK guard being deliberately
-  overridden, not a workaround for a bug.
-- `librte_bus_platform` (which provides `rte_platform_register`) is
-  linked explicitly via `cc.find_library()`, since drivers aren't part
-  of `pkg-config --libs libdpdk`'s default output — only core DPDK
-  libraries are.
-- None of DPDK's own source tree (`drivers/...`, `lib/...`) is
-  referenced anywhere in this build — only pkg-config output and
-  installed driver-SDK headers.
+- Compiles with `-DALLOW_INTERNAL_API` to use `__rte_internal` DPDK
+  calls (`rte_eth_dev_allocate`, `rte_platform_register`, etc.).
+- `librte_bus_platform` is linked explicitly via `cc.find_library()`,
+  since it's not part of `pkg-config --libs libdpdk`'s default output.
 
 ## Runtime
 
@@ -86,3 +72,9 @@ dpdk-testpmd -d build/drivers/net/xxv/librte_net_xilinx.so -- -i
 ```
 The device's device-tree node must have
 `compatible = "xlnx,xxv-ethernet-1.0"` for probing to match.
+
+## License
+
+BSD-3-Clause
+
+Copyright (C) 2026, Advanced Micro Devices, Inc.

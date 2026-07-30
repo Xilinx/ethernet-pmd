@@ -1,5 +1,6 @@
-/* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(C) 2026 AMD-Xilinx.
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Copyright (C) 2026, Advanced Micro Devices, Inc.
  */
 
 #ifndef _XXV_ETHDEV_H_

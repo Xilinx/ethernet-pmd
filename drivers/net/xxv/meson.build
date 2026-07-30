@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-3-Clause
-# Copyright(C) 2024 AMD-Xilinx
+# Copyright (C) 2026, Advanced Micro Devices, Inc.
 
 # rte_platform_register() lives in the bus/platform driver, not a core
 # DPDK library, so it isn't part of libdpdk.pc's default (dynamic) Libs.
