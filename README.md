@@ -73,6 +73,12 @@ dpdk-testpmd -d build/drivers/net/xxv/librte_net_xilinx.so -- -i
 The device's device-tree node must have
 `compatible = "xlnx,xxv-ethernet-1.0"` for probing to match.
 
+The AXI DMA must be attached to a cache-coherent port (HPC), with
+`dma-coherent` set on the device-tree node. `axidma_flush_bd_cache()`
+only issues `rte_wmb()`/`rte_io_wmb()` ordering barriers, not an actual
+cache flush — it relies on this coherency for BD ring visibility to the
+DMA engine.
+
 ## License
 
 BSD-3-Clause
