@@ -1,4 +1,4 @@
-# EthernetPMD
+# ethernet-pmd
 
 Standalone, out-of-tree DPDK platform-bus PMD for the AMD-Xilinx XXV
 Ethernet + AXI DMA IP.
@@ -10,7 +10,7 @@ to be added in the future without restructuring the project.
 ## Repo structure
 
 ```
-xxv-pmd/
+ethernet-pmd/
 ├── README.md
 ├── meson.build                  # project setup, dpdk dependency, subdir() per driver
 └── drivers/
@@ -48,7 +48,8 @@ meson setup build --cross-file <aarch64_cross.ini>
 ninja -C build
 ```
 
-Output: `build/drivers/net/xxv/librte_net_xilinx.so`
+Output: `build/drivers/net/xxv/librte_net_xilinx.so` (symlink to the
+versioned `librte_net_xilinx.so.1.0.0`)
 
 This is a DPDK PMD shared library, not a standalone executable. It must
 be loaded by a DPDK application such as `testpmd`.

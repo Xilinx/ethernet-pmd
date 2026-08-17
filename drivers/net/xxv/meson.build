@@ -16,4 +16,6 @@ shared_library('rte_net_xilinx', sources,
     c_args: ['-DALLOW_INTERNAL_API'],
     install: true,
     install_dir: get_option('libdir') / 'dpdk' / 'drivers',
+    version: meson.project_version(),
+    soversion: meson.project_version().split('.')[0],
 )
