@@ -49,7 +49,11 @@ ninja -C build
 ```
 
 Output: `build/drivers/net/xxv/librte_net_xilinx.so` (symlink to the
-versioned `librte_net_xilinx.so.1.0.0`)
+versioned `librte_net_xilinx.so.<dpdk_abi>`, e.g. `.so.26.0` for DPDK
+25.11). The version/soversion and install path are derived from the
+target DPDK's `RTE_EAL_PMD_PATH` (`rte_build_config.h`), matching
+in-tree PMD conventions, so `ninja install` places it under
+`<libdir>/dpdk/pmds-<abi>/` alongside DPDK's own drivers.
 
 This is a DPDK PMD shared library, not a standalone executable. It must
 be loaded by a DPDK application such as `testpmd`.
@@ -71,6 +75,11 @@ Load with:
 ```bash
 dpdk-testpmd -d build/drivers/net/xxv/librte_net_xilinx.so -- -i
 ```
+`-d` is required whenever the DPDK application is statically linked
+against DPDK (the common case, including a default-built `testpmd`):
+EAL only auto-scans its installed `pmds-<abi>/` directory when DPDK
+itself is a shared build.
+
 The device's device-tree node must have
 `compatible = "xlnx,xxv-ethernet-1.0"` for probing to match.
 

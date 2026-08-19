@@ -11,11 +11,21 @@ sources = files(
     'axidma.c',
 )
 
+# Install alongside the in-tree PMDs, in EAL's RTE_EAL_PMD_PATH
+# (pmds-<abi>/), and version the .so the same way DPDK versions its own
+# drivers: by ABI, not by an independent driver release number.
+# libdpdk.pc's Version is the DPDK release (e.g. 25.11.2), not the ABI,
+# so derive it from the installed rte_build_config.h instead.
+pmd_path = cc.get_define('RTE_EAL_PMD_PATH',
+    prefix: '#include <rte_build_config.h>',
+    dependencies: dpdk).strip('"')
+abi = pmd_path.split('pmds-')[1]
+
 shared_library('rte_net_xilinx', sources,
     dependencies: [dpdk, bus_platform],
     c_args: ['-DALLOW_INTERNAL_API'],
     install: true,
-    install_dir: get_option('libdir') / 'dpdk' / 'drivers',
-    version: meson.project_version(),
-    soversion: meson.project_version().split('.')[0],
+    install_dir: pmd_path,
+    version: abi,
+    soversion: abi.split('.')[0],
 )
